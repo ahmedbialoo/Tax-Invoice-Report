@@ -1,0 +1,120 @@
+[DataContractAttribute,
+    SysOperationContractProcessingAttribute(classStr(SCVATSummaryReportUIBuilderV3))]
+class SCVATSummaryReportContractV3 implements SysOperationValidatable
+{
+    FromDate fromDate;
+    ToDate toDate;
+    LogisticsAddressCityName city;
+    TaxDirection taxDirection;
+    DimensionValue dimensionValue;
+    DetailSummary summary;
+    NoYes totalByVoucher;
+    NoYes totalByInvoiceId;
+    [
+        DataMemberAttribute('fromDate'),
+        SysOperationLabelAttribute(literalStr("@SYS312575")),
+        SysOperationDisplayOrderAttribute('1')
+    ]
+    public FromDate parmFromDate(FromDate _fromDate = fromDate)
+    {
+        fromDate = _fromDate;
+        return fromDate;
+    }
+
+    [
+        DataMemberAttribute('toDate'),
+        SysOperationLabelAttribute(literalStr("@SYS36680")),
+        SysOperationDisplayOrderAttribute('2')
+    ]
+    public ToDate parmToDate(ToDate _toDate = toDate)
+    {
+        toDate = _toDate;
+        return toDate;
+    }
+
+    [
+        DataMemberAttribute('summary'),
+        SysOperationLabelAttribute(literalStr("@SYS26676")),
+        SysOperationDisplayOrderAttribute('3')
+    ]
+    public DetailSummary parmSummary(DetailSummary _summary = summary)
+    {
+        summary = _summary;
+        return summary;
+    }
+
+    [
+        DataMemberAttribute('dimensionValue'),
+        SysOperationLabelAttribute(literalStr("@Dimension:DimensionValue")),
+        SysOperationDisplayOrderAttribute('4')
+    ]
+    public DimensionValue parmDimensionValue(DimensionValue _dimensionValue = dimensionValue)
+    {
+        dimensionValue = _dimensionValue;
+        return dimensionValue;
+    }
+
+    [
+        DataMemberAttribute('city'),
+        SysOperationLabelAttribute(literalStr("@SYS22249")),
+        SysOperationDisplayOrderAttribute('5')
+    ]
+    public LogisticsAddressCityName parmCity(LogisticsAddressCityName _city = city)
+    {
+        city = _city;
+        return city;
+    }
+
+    [
+        DataMemberAttribute('taxDirection'),
+        SysOperationLabelAttribute(literalStr("@SYS23179")),
+        SysOperationDisplayOrderAttribute('6')
+    ]
+    public TaxDirection parmTaxDirection(TaxDirection _taxDirection = taxDirection)
+    {
+        taxDirection = _taxDirection;
+        return taxDirection;
+    }
+
+    [
+        DataMemberAttribute('totalByVoucher'),
+        SysOperationLabelAttribute(literalStr("@SYS77883")),
+        SysOperationDisplayOrderAttribute('7')
+    ]
+    public NoYes parmTotalByVoucher(NoYes _totalByVoucher = totalByVoucher)
+    {
+        totalByVoucher = _totalByVoucher;
+        return totalByVoucher;
+    }
+
+    [
+        DataMemberAttribute('totalByInvoiceId'),
+        SysOperationLabelAttribute(literalStr("@VatReportLabels:TotalByInvoice")),
+        SysOperationDisplayOrderAttribute('8')
+    ]
+    public NoYes parmTotalByInvoiceId(NoYes _totalByInvoiceId = totalByInvoiceId)
+    {
+        totalByInvoiceId = _totalByInvoiceId;
+        return totalByInvoiceId;
+    }
+
+    public boolean validate()
+    {
+        boolean isValid = true;
+
+        if (fromDate != dateNull() && toDate == dateNull())
+        {
+            toDate = systemDateGet();
+        }
+
+        if (fromDate != dateNull()
+            && toDate != dateNull()
+            && fromDate > toDate)
+        {
+            isValid = checkFailed("From date cannot be greater than To date.");
+        }
+
+        return isValid;
+    }
+
+}
