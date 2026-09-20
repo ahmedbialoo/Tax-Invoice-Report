@@ -432,128 +432,126 @@ class SCVATSummaryReportDPV3 extends SRSReportDataProviderBase
         return invoiceQty;
     }
 
+    /// <summary>
+    /// Returns the localized order type for sales/purchase order origins,
+    /// "Credit note" for verified credit-note origins, otherwise blank.
+    /// Payment journal tax and non-order origins stay blank.
+    /// </summary>
     private str getInvoiceTypeText(TaxTrans _taxTrans, CustVendInvoiceJour _invoiceJour)
     {
-        boolean isPurchase = this.isPurchaseSource(_taxTrans, _invoiceJour);
-        boolean isCreditNote = this.isCreditNote(_taxTrans, _invoiceJour);
-
-        if (isPurchase)
-        {
-            return isCreditNote ? 'Purch credit note' : 'Purchase';
-        }
-
-        return isCreditNote ? 'Sales credit note' : 'Sales';
-    }
-
-    private boolean isPurchaseSource(TaxTrans _taxTrans, CustVendInvoiceJour _invoiceJour)
-    {
+        TaxTrans taxTransSource = _taxTrans;
         RefTableId sourceTableId = _taxTrans.SourceTableId;
+        RefRecId sourceRecId = _taxTrans.SourceRecId;
 
         if (_taxTrans.TaxOrigin == TaxOrigin::TaxReversed)
         {
-            sourceTableId = TaxTrans::find(_taxTrans.Voucher, _taxTrans.TransDate).SourceTableId;
+            taxTransSource = TaxTrans::find(_taxTrans.Voucher, _taxTrans.TransDate);
+            if (taxTransSource.RecId)
+            {
+                sourceTableId = taxTransSource.SourceTableId;
+                sourceRecId = taxTransSource.SourceRecId;
+            }
         }
 
-        if (_invoiceJour.RecId)
+        if (_invoiceJour.RecId
+            && (_invoiceJour.TableId == tableNum(CustInvoiceJour)
+             || _invoiceJour.TableId == tableNum(VendInvoiceJour))
+            && _invoiceJour.creditNote())
         {
-            switch (_invoiceJour.TableId)
-            {
-                case tableNum(VendInvoiceJour):
-                    return true;
-
-                case tableNum(CustInvoiceJour):
-                    return false;
-            }
+            return 'Credit note';
         }
 
         switch (sourceTableId)
         {
-            case tableNum(VendInvoiceTrans):
-            case tableNum(VendInvoiceJour):
-            case tableNum(VendTrans):
-                return true;
-
             case tableNum(CustInvoiceTrans):
-            case tableNum(CustInvoiceLine):
-            case tableNum(CustInvoiceJour):
-            case tableNum(CustTrans):
-            case tableNum(ProjInvoiceCost):
-            case tableNum(ProjInvoiceEmpl):
-            case tableNum(ProjInvoiceItem):
-            case tableNum(ProjInvoiceOnAcc):
-            case tableNum(ProjInvoiceRevenue):
-                return false;
+                return this.getSalesOrderTypeText(
+                    CustInvoiceTrans::findRecId(sourceRecId).SalesId);
 
-            case tableNum(LedgerJournalTrans):
-                return this.isLedgerJournalPurchase(_taxTrans);
+            case tableNum(CustInvoiceLine):
+                return this.getSalesOrderTypeText(
+                    CustInvoiceTrans::findBySourceDocumentLine(
+                        CustInvoiceLine::find(sourceRecId).SourceDocumentLine).SalesId);
+
+            case tableNum(VendInvoiceTrans):
+                return this.getPurchaseOrderTypeText(
+                    VendInvoiceTrans::findRecId(sourceRecId).PurchId);
 
             case tableNum(MarkupTrans):
-                MarkupTrans markupTrans = MarkupTrans::findRecId(_taxTrans.SourceRecId);
+                MarkupTrans markupTrans = MarkupTrans::findRecId(sourceRecId);
                 switch (markupTrans.TransTableId)
                 {
-                    case tableNum(VendInvoiceJour):
-                    case tableNum(VendInvoiceTrans):
-                        return true;
+                    case tableNum(CustInvoiceTrans):
+                        return this.getSalesOrderTypeText(
+                            CustInvoiceTrans::findRecId(markupTrans.TransRecId).SalesId);
 
                     case tableNum(CustInvoiceJour):
-                    case tableNum(CustInvoiceTrans):
-                    case tableNum(ProjInvoiceJour):
-                    case tableNum(ProjInvoiceItem):
-                        return false;
+                        return this.getSalesOrderTypeText(
+                            CustInvoiceJour::findRecId(markupTrans.TransRecId).SalesId);
+
+                    case tableNum(VendInvoiceTrans):
+                        return this.getPurchaseOrderTypeText(
+                            VendInvoiceTrans::findRecId(markupTrans.TransRecId).PurchId);
+
+                    case tableNum(VendInvoiceJour):
+                        return this.getPurchaseOrderTypeText(
+                            VendInvoiceJour::findRecId(markupTrans.TransRecId).PurchId);
+                }
+                break;
+
+            case tableNum(CustTrans):
+                if (_invoiceJour.RecId && _invoiceJour.TableId == tableNum(CustInvoiceJour))
+                {
+                    return this.getSalesOrderTypeText(_invoiceJour.Num);
+                }
+                break;
+
+            case tableNum(VendTrans):
+                if (_invoiceJour.RecId && _invoiceJour.TableId == tableNum(VendInvoiceJour))
+                {
+                    return this.getPurchaseOrderTypeText(_invoiceJour.Num);
                 }
                 break;
         }
 
-        return _taxTrans.TaxDirection == TaxDirection::IncomingTax
-            || _taxTrans.TaxDirection == TaxDirection::UseTax;
+        // Ledger journal payments, project invoices, free-text, and other
+        // non-order origins remain blank by design.
+        return '';
     }
 
-    private boolean isLedgerJournalPurchase(TaxTrans _taxTrans)
+    private str getSalesOrderTypeText(SalesId _salesId)
     {
-        LedgerJournalTrans ledgerJournalTrans = LedgerJournalTrans::findRecId(_taxTrans.SourceRecId, false);
-        LedgerJournalTrans ledgerJournalTransVend;
+        SalesTable salesTable;
 
-        if (ledgerJournalTrans.AccountType == LedgerJournalACType::Vend)
+        if (!_salesId)
         {
-            return true;
+            return '';
         }
 
-        if (ledgerJournalTrans.AccountType == LedgerJournalACType::Cust)
+        salesTable = SalesTable::find(_salesId);
+        if (!salesTable.RecId)
         {
-            return false;
+            return '';
         }
 
-        select firstonly RecId from ledgerJournalTransVend
-            where ledgerJournalTransVend.JournalNum == ledgerJournalTrans.JournalNum
-               && ledgerJournalTransVend.Voucher == ledgerJournalTrans.Voucher
-               && ledgerJournalTransVend.TransDate == ledgerJournalTrans.TransDate
-               && ledgerJournalTransVend.Invoice
-               && ledgerJournalTransVend.AccountType == LedgerJournalACType::Vend;
-
-        if (ledgerJournalTransVend.RecId)
-        {
-            return true;
-        }
-
-        return ledgerJournalTrans.AccountType == LedgerJournalACType::Ledger
-            && ledgerJournalTrans.ledgerJournalTable().JournalType == LedgerJournalType::Approval;
+        return enum2Str(salesTable.SalesType);
     }
 
-    private boolean isCreditNote(TaxTrans _taxTrans, CustVendInvoiceJour _invoiceJour)
+    private str getPurchaseOrderTypeText(PurchId _purchId)
     {
-        if (_invoiceJour.RecId
-            && (_invoiceJour.TableId == tableNum(CustInvoiceJour)
-             || _invoiceJour.TableId == tableNum(VendInvoiceJour)))
+        PurchTable purchTable;
+
+        if (!_purchId)
         {
-            return _invoiceJour.creditNote();
+            return '';
         }
 
-        if (_invoiceJour.RecId)
+        purchTable = PurchTable::find(_purchId);
+        if (!purchTable.RecId)
         {
-            return _invoiceJour.InvoiceAmount < 0;
+            return '';
         }
 
-        return _taxTrans.TaxBaseAmountCur < 0;
+        return enum2Str(purchTable.PurchaseType);
     }
 
     private VendTable getVendTable(VendAccount _vendAccount)
