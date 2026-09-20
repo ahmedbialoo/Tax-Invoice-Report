@@ -1,0 +1,638 @@
+[SRSReportParameterAttribute(classStr(SCVATSummaryReportContractV3)),
+SRSReportQueryAttribute(queryStr(SCTaxTrans))]
+class SCVATSummaryReportDPV3 extends SRSReportDataProviderBase
+{
+    SCVATSummaryReportTmp SCVATSummaryReportTmp;
+    SCVATSummaryReportContractV3 contract;
+    [SRSReportDataSetAttribute(tableStr(SCVATSummaryReportTmp))]
+    public SCVATSummaryReportTmp getSCVATSummaryReportTmp()
+    {
+        select * from SCVATSummaryReportTmp
+            order by SCVATSummaryReportTmp.Name;
+
+        return SCVATSummaryReportTmp;
+    }
+
+    public void processReport()
+    {
+        FromDate fromDate;
+        ToDate toDate;
+        date groupingDate;
+        Bitmap logo;
+        LogisticsAddressCityName city;
+        TaxDirection taxDirection;
+        DetailSummary summary;
+        DimensionValue dimensionValue;
+        boolean groupByInvoiceId;
+        boolean groupByVoucher;
+        Query query;
+        QueryRun queryRun;
+        QueryBuildDataSource taxTransDataSource;
+        QueryBuildRange transDateRange;
+        QueryBuildRange taxDirectionRange;
+        TaxTrans taxTrans;
+
+        logo = CompanyImage::findByRecord(CompanyInfo::find()).Image;
+        query = this.parmQuery();
+        contract = this.parmDataContract();
+        fromDate = contract.parmFromDate();
+        toDate = contract.parmToDate();
+        city = contract.parmCity();
+        taxDirection = contract.parmTaxDirection();
+        summary = contract.parmSummary();
+        dimensionValue = contract.parmDimensionValue();
+        groupByVoucher = contract.parmTotalByVoucher() == NoYes::Yes;
+        groupByInvoiceId = contract.parmTotalByInvoiceId() == NoYes::Yes
+            && !groupByVoucher;
+
+        if (fromDate != dateNull() && toDate == dateNull())
+        {
+            toDate = systemDateGet();
+        }
+
+        groupingDate = toDate != dateNull() ? toDate : systemDateGet();
+        taxTransDataSource = query.dataSourceTable(tableNum(TaxTrans));
+
+        if (fromDate != dateNull() || toDate != dateNull())
+        {
+            transDateRange = taxTransDataSource.findRange(fieldNum(TaxTrans, TransDate));
+            if (!transDateRange)
+            {
+                transDateRange = taxTransDataSource.addRange(fieldNum(TaxTrans, TransDate));
+            }
+
+            if (!transDateRange.value())
+            {
+                if (fromDate != dateNull())
+                {
+                    transDateRange.value(SysQuery::range(fromDate, toDate));
+                }
+                else
+                {
+                    transDateRange.value(SysQuery::range(dateNull(), toDate));
+                }
+            }
+        }
+
+        if (summary == DetailSummary::Detail)
+        {
+            taxDirectionRange = taxTransDataSource.findRange(fieldNum(TaxTrans, TaxDirection));
+            if (!taxDirectionRange)
+            {
+                taxDirectionRange = taxTransDataSource.addRange(fieldNum(TaxTrans, TaxDirection));
+            }
+
+            if (!taxDirectionRange.value())
+            {
+                taxDirectionRange.value(SysQuery::value(taxDirection));
+            }
+        }
+
+        ttsbegin;
+        queryRun = new QueryRun(query);
+        while (queryRun.next())
+        {
+            GeneralJournalAccountEntry generalJournalAccountEntry;
+            TaxTransGeneralJournalAccountEntry taxTransGeneralJournalAccountEntry;
+            GeneralJournalEntry generalJournalEntry;
+            MainAccountNum accountNum;
+            LogisticsAddressCityName transactionCity;
+
+            taxTrans = queryRun.get(tableNum(TaxTrans));
+
+            select firstonly crosscompany generalJournalEntry
+                join generalJournalAccountEntry
+                    where generalJournalEntry.RecId == generalJournalAccountEntry.GeneralJournalEntry
+                join taxTransGeneralJournalAccountEntry
+                    where taxTransGeneralJournalAccountEntry.DataAreaId == generalJournalEntry.SubledgerVoucherDataAreaId
+                       && taxTransGeneralJournalAccountEntry.GeneralJournalAccountEntry == generalJournalAccountEntry.RecId
+                       && taxTransGeneralJournalAccountEntry.TaxTrans == taxTrans.RecId;
+
+            accountNum = taxTrans.accountName();
+
+            if (curExt() == "jeco")
+            {
+                transactionCity = this.getCityNameForJeco(taxTrans, generalJournalAccountEntry);
+                if (!((city == transactionCity || !city || summary == DetailSummary::Summary)
+                    && accountNum != '69000103'))
+                {
+                    continue;
+                }
+            }
+            else
+            {
+                transactionCity = this.getCityNameByBranch(generalJournalAccountEntry);
+                if (!((dimensionValue == transactionCity || !dimensionValue || summary == DetailSummary::Summary)
+                    && accountNum != '69000103'))
+                {
+                    continue;
+                }
+            }
+
+            SCVATSummaryReportTmp.clear();
+
+            if (groupByInvoiceId)
+            {
+                select firstonly forupdate SCVATSummaryReportTmp
+                    where SCVATSummaryReportTmp.InvoiceId == taxTrans.sourceInvoiceNo()
+                       && SCVATSummaryReportTmp.TaxCode == taxTrans.TaxCode
+                       && SCVATSummaryReportTmp.TaxDirection == taxTrans.TaxDirection;
+            }
+            else if (groupByVoucher)
+            {
+                select firstonly forupdate SCVATSummaryReportTmp
+                    where SCVATSummaryReportTmp.Voucher == taxTrans.Voucher
+                       && SCVATSummaryReportTmp.TaxCode == taxTrans.TaxCode
+                       && SCVATSummaryReportTmp.TaxDirection == taxTrans.TaxDirection;
+            }
+
+            if (SCVATSummaryReportTmp.RecId != 0)
+            {
+                SCVATSummaryReportTmp.TaxBaseAmountCur += taxTrans.TaxBaseAmountCur;
+                SCVATSummaryReportTmp.TaxAmountCur += taxTrans.TaxAmountCur;
+                SCVATSummaryReportTmp.TotalTaxAmountCur += taxTrans.amountInclTax();
+                SCVATSummaryReportTmp.update();
+                continue;
+            }
+
+            SCVATSummaryReportTmp.clear();
+            SCVATSummaryReportTmp.City = transactionCity;
+            SCVATSummaryReportTmp.CompanyLogo = logo;
+            SCVATSummaryReportTmp.Text = generalJournalAccountEntry.Text;
+            SCVATSummaryReportTmp.TaxBaseAmountCur = taxTrans.TaxBaseAmountCur;
+            SCVATSummaryReportTmp.TaxAmountCur = taxTrans.TaxAmountCur;
+            SCVATSummaryReportTmp.TotalTaxAmountCur = taxTrans.amountInclTax();
+            SCVATSummaryReportTmp.AccountingDate = taxTrans.TransDate;
+            SCVATSummaryReportTmp.TaxDirection = taxTrans.TaxDirection;
+            SCVATSummaryReportTmp.Voucher = taxTrans.Voucher;
+            SCVATSummaryReportTmp.TaxCode = taxTrans.TaxCode;
+            SCVATSummaryReportTmp.TaxCodeName = taxTrans.taxName();
+            SCVATSummaryReportTmp.TaxValue = taxTrans.TaxValue / 100;
+            SCVATSummaryReportTmp.SourceBaseAmountCur = taxTrans.SourceBaseAmountCur;
+            SCVATSummaryReportTmp.SourceTaxAmountCur = taxTrans.SourceTaxAmountCur;
+            SCVATSummaryReportTmp.CurrencyCode = taxTrans.SourceCurrencyCode;
+            SCVATSummaryReportTmp.InvoiceId = taxTrans.sourceInvoiceNo();
+            SCVATSummaryReportTmp.InvoiceLineQty = this.getInvoiceQty(taxTrans);
+
+            CustVendInvoiceJour invoiceJour = taxTrans.getInvoiceJour_EE();
+            SCVATSummaryReportTmp.InvoiceDate = invoiceJour.InvoiceDate;
+            SCVATSummaryReportTmp.InvoiceAccount = invoiceJour.InvoiceAccount;
+            SCVATSummaryReportTmp.OrderAccount = invoiceJour.OrderAccount;
+            SCVATSummaryReportTmp.InvoiceNum = invoiceJour.InvoiceNum;
+            SCVATSummaryReportTmp.Sales = this.getInvoiceTypeText(taxTrans, invoiceJour);
+            SCVATSummaryReportTmp.SC_VatNo = this.getVendTable(invoiceJour.InvoiceAccount).getVatNumPrimaryRegistrationNumber();
+            if (mthOfYr(taxTrans.TransDate) == mthOfYr(groupingDate)
+                && year(taxTrans.TransDate) == year(groupingDate))
+            {
+                SCVATSummaryReportTmp.MthOrder = 1;
+            }
+            else
+            {
+                SCVATSummaryReportTmp.MthOrder = 2;
+            }
+
+            Name sourceName = taxTrans.sourceName();
+            if (taxTrans.SourceTableId == tableNum(LedgerJournalTrans))
+            {
+                BankAccountTrans bankAccountTrans;
+                VendTrans vendTrans;
+                LedgerJournalTrans ledgerJournalTrans =
+                    LedgerJournalTrans::findRecId(taxTrans.SourceRecId, false);
+
+                if (ledgerJournalTrans)
+                {
+                    LedgerJournalTrans bankLedgerJournalTrans;
+                    MainAccountNum mainAccount =
+                        LedgerDimensionFacade::getMainAccountFromLedgerDimension(
+                            ledgerJournalTrans.LedgerDimension).MainAccountId;
+                    boolean isVendorLine =
+                        ledgerJournalTrans.AccountType == LedgerJournalACType::Vend
+                        || ledgerJournalTrans.OffsetAccountType == LedgerJournalACType::Vend;
+
+                    if (!isVendorLine
+                        && ledgerJournalTrans.AccountType == LedgerJournalACType::Ledger)
+                    {
+                        select firstonly RecId from bankLedgerJournalTrans
+                            where bankLedgerJournalTrans.JournalNum == ledgerJournalTrans.JournalNum
+                               && bankLedgerJournalTrans.Voucher == ledgerJournalTrans.Voucher
+                               && bankLedgerJournalTrans.TransDate == ledgerJournalTrans.TransDate
+                               && bankLedgerJournalTrans.AccountType == LedgerJournalACType::Bank
+                               && ((ledgerJournalTrans.AmountCurDebit != 0
+                                    && bankLedgerJournalTrans.AmountCurCredit
+                                        == ledgerJournalTrans.AmountCurDebit)
+                                   || (ledgerJournalTrans.AmountCurCredit != 0
+                                    && bankLedgerJournalTrans.AmountCurDebit
+                                        == ledgerJournalTrans.AmountCurCredit));
+                    }
+
+                    boolean isBankLine =
+                        !isVendorLine
+                        && (ledgerJournalTrans.AccountType == LedgerJournalACType::Bank
+                            || ledgerJournalTrans.OffsetAccountType == LedgerJournalACType::Bank
+                            || bankLedgerJournalTrans.RecId != 0);
+
+                    if (mainAccount == "68000101")
+                    {
+                        DimensionAttributeValue dimValue =
+                            this.getVendNameByDim(ledgerJournalTrans.LedgerDimension);
+                        sourceName = dimValue.getName();
+                        SCVATSummaryReportTmp.InvoiceAccount = dimValue.getValue();
+                    }
+
+                    if (isVendorLine)
+                    {
+                        select firstonly AccountNum from vendTrans index VoucherDateIdx
+                            where vendTrans.Voucher == taxTrans.Voucher
+                               && vendTrans.TransDate == taxTrans.TransDate;
+
+                        if (vendTrans.AccountNum)
+                        {
+                            sourceName = VendTable::find(vendTrans.AccountNum).name();
+                        }
+                    }
+                    else if (isBankLine)
+                    {
+                        select firstonly AccountId from bankAccountTrans index VoucherDateIdx
+                            where bankAccountTrans.Voucher == taxTrans.Voucher
+                               && bankAccountTrans.TransDate == taxTrans.TransDate;
+
+                        if (bankAccountTrans.AccountId)
+                        {
+                            sourceName =
+                                (select firstonly Name from bankAccountTable index AccountIdx
+                                    where bankAccountTable.AccountID == bankAccountTrans.AccountId).Name;
+                        }
+                    }
+                }
+            }
+
+            SCVATSummaryReportTmp.Name = sourceName;
+
+            if (abs(SCVATSummaryReportTmp.TaxValue) < 0.00001)
+            {
+                continue;
+            }
+
+            SCVATSummaryReportTmp.insert();
+        }
+        ttscommit;
+    }
+
+    private DimensionAttributeValue getVendNameByDim(LedgerDimensionAccount _ledgerDimension)
+    {
+        Name dimName = "*" + curExt() + "Vendor*";
+        DimensionAttribute dimensionAttribute;
+        DimensionDefault defaultDimension =
+            LedgerDimensionFacade::getDefaultDimensionFromLedgerDimension(_ledgerDimension);
+        DimensionAttributeValueSetStorage dimStorage =
+            DimensionAttributeValueSetStorage::find(defaultDimension);
+
+        select firstonly dimensionAttribute
+            where dimensionAttribute.Name like dimName;
+
+        return DimensionAttributeValue::find(
+            dimStorage.getValueByDimensionAttribute(dimensionAttribute.RecId));
+    }
+
+    private LogisticsAddressCityName getCityNameByBranch(
+        GeneralJournalAccountEntry _generalJournalAccountEntry)
+    {
+        LogisticsAddressCityName city = "NoCity";
+        Name dimName = "*" + curExt() + "Branch*";
+        DimensionAttribute dimensionAttribute;
+
+        if (!_generalJournalAccountEntry)
+        {
+            return city;
+        }
+
+        DimensionDefault defaultDimension =
+            LedgerDimensionFacade::getDefaultDimensionFromLedgerDimension(
+                _generalJournalAccountEntry.LedgerDimension);
+        DimensionAttributeValueSetStorage dimStorage =
+            DimensionAttributeValueSetStorage::find(defaultDimension);
+
+        select firstonly dimensionAttribute
+            where dimensionAttribute.Name like dimName;
+
+        DimensionAttributeValue dimValue = DimensionAttributeValue::find(
+            dimStorage.getValueByDimensionAttribute(dimensionAttribute.RecId));
+
+        return dimValue ? dimValue.getValue() : city;
+    }
+
+    private LogisticsAddressCityName getCityNameByProject(
+        GeneralJournalAccountEntry _generalJournalAccountEntry)
+    {
+        LogisticsAddressCityName city = "NoCity";
+        Name dimName = "*" + curExt() + "Project*";
+        DimensionAttribute dimensionAttribute;
+
+        if (!_generalJournalAccountEntry)
+        {
+            return city;
+        }
+
+        DimensionDefault defaultDimension =
+            LedgerDimensionFacade::getDefaultDimensionFromLedgerDimension(
+                _generalJournalAccountEntry.LedgerDimension);
+        DimensionAttributeValueSetStorage dimStorage =
+            DimensionAttributeValueSetStorage::find(defaultDimension);
+
+        select firstonly dimensionAttribute
+            where dimensionAttribute.Name like dimName;
+
+        DimensionAttributeValue dimValue = DimensionAttributeValue::find(
+            dimStorage.getValueByDimensionAttribute(dimensionAttribute.RecId));
+
+        return dimValue ? ProjTable::find(dimValue.getValue()).City_Mia : city;
+    }
+
+    private Qty getInvoiceQty(TaxTrans _taxTrans)
+    {
+        CustVendInvoiceJour invoiceJour = _taxTrans.getInvoiceJour_EE();
+        Qty invoiceQty;
+
+        if (!invoiceJour.RecId)
+        {
+            return 0;
+        }
+
+        switch (invoiceJour.TableId)
+        {
+            case tableNum(CustInvoiceJour):
+                CustInvoiceJour custInvoiceJour;
+                CustInvoiceTrans custInvoiceTrans;
+
+                select firstonly custInvoiceJour
+                    where custInvoiceJour.RecId == invoiceJour.RecId;
+
+                select sum(Qty) from custInvoiceTrans
+                    where custInvoiceTrans.SalesId == custInvoiceJour.SalesId
+                       && custInvoiceTrans.InvoiceId == custInvoiceJour.InvoiceId
+                       && custInvoiceTrans.InvoiceDate == custInvoiceJour.InvoiceDate
+                       && custInvoiceTrans.NumberSequenceGroup
+                            == custInvoiceJour.NumberSequenceGroup;
+
+                invoiceQty = custInvoiceTrans.Qty;
+                break;
+
+            case tableNum(VendInvoiceJour):
+                VendInvoiceJour vendInvoiceJour;
+                VendInvoiceTrans vendInvoiceTrans;
+
+                select firstonly vendInvoiceJour
+                    where vendInvoiceJour.RecId == invoiceJour.RecId;
+
+                select sum(Qty) from vendInvoiceTrans
+                    where vendInvoiceTrans.PurchId == vendInvoiceJour.PurchId
+                       && vendInvoiceTrans.InvoiceId == vendInvoiceJour.InvoiceId
+                       && vendInvoiceTrans.InvoiceDate == vendInvoiceJour.InvoiceDate
+                       && vendInvoiceTrans.NumberSequenceGroup
+                            == vendInvoiceJour.NumberSequenceGroup
+                       && vendInvoiceTrans.InternalInvoiceId
+                            == vendInvoiceJour.InternalInvoiceId;
+
+                invoiceQty = vendInvoiceTrans.Qty;
+                break;
+
+            case tableNum(ProjInvoiceJour):
+                ProjInvoiceJour projInvoiceJour;
+                ProjInvoiceCost projInvoiceCost;
+                ProjInvoiceEmpl projInvoiceEmpl;
+                ProjInvoiceItem projInvoiceItem;
+                ProjInvoiceRevenue projInvoiceRevenue;
+
+                select firstonly projInvoiceJour
+                    where projInvoiceJour.RecId == invoiceJour.RecId;
+
+                select sum(Qty) from projInvoiceCost
+                    where projInvoiceCost.ProjInvoiceId == projInvoiceJour.ProjInvoiceId
+                       && projInvoiceCost.InvoiceDate == projInvoiceJour.InvoiceDate;
+
+                select sum(Qty) from projInvoiceEmpl
+                    where projInvoiceEmpl.ProjInvoiceId == projInvoiceJour.ProjInvoiceId
+                       && projInvoiceEmpl.InvoiceDate == projInvoiceJour.InvoiceDate;
+
+                select sum(Qty) from projInvoiceItem
+                    where projInvoiceItem.ProjInvoiceId == projInvoiceJour.ProjInvoiceId
+                       && projInvoiceItem.InvoiceDate == projInvoiceJour.InvoiceDate;
+
+                select sum(Qty) from projInvoiceRevenue
+                    where projInvoiceRevenue.ProjInvoiceId == projInvoiceJour.ProjInvoiceId
+                       && projInvoiceRevenue.InvoiceDate == projInvoiceJour.InvoiceDate;
+
+                invoiceQty = projInvoiceCost.Qty
+                    + projInvoiceEmpl.Qty
+                    + projInvoiceItem.Qty
+                    + projInvoiceRevenue.Qty;
+                break;
+        }
+
+        return invoiceQty;
+    }
+
+    private str getInvoiceTypeText(TaxTrans _taxTrans, CustVendInvoiceJour _invoiceJour)
+    {
+        boolean isPurchase = this.isPurchaseSource(_taxTrans, _invoiceJour);
+        boolean isCreditNote = this.isCreditNote(_taxTrans, _invoiceJour);
+
+        if (isPurchase)
+        {
+            return isCreditNote ? 'Purch credit note' : 'Purchase';
+        }
+
+        return isCreditNote ? 'Sales credit note' : 'Sales';
+    }
+
+    private boolean isPurchaseSource(TaxTrans _taxTrans, CustVendInvoiceJour _invoiceJour)
+    {
+        RefTableId sourceTableId = _taxTrans.SourceTableId;
+
+        if (_taxTrans.TaxOrigin == TaxOrigin::TaxReversed)
+        {
+            sourceTableId = TaxTrans::find(_taxTrans.Voucher, _taxTrans.TransDate).SourceTableId;
+        }
+
+        if (_invoiceJour.RecId)
+        {
+            switch (_invoiceJour.TableId)
+            {
+                case tableNum(VendInvoiceJour):
+                    return true;
+
+                case tableNum(CustInvoiceJour):
+                    return false;
+            }
+        }
+
+        switch (sourceTableId)
+        {
+            case tableNum(VendInvoiceTrans):
+            case tableNum(VendInvoiceJour):
+            case tableNum(VendTrans):
+                return true;
+
+            case tableNum(CustInvoiceTrans):
+            case tableNum(CustInvoiceLine):
+            case tableNum(CustInvoiceJour):
+            case tableNum(CustTrans):
+            case tableNum(ProjInvoiceCost):
+            case tableNum(ProjInvoiceEmpl):
+            case tableNum(ProjInvoiceItem):
+            case tableNum(ProjInvoiceOnAcc):
+            case tableNum(ProjInvoiceRevenue):
+                return false;
+
+            case tableNum(LedgerJournalTrans):
+                return this.isLedgerJournalPurchase(_taxTrans);
+
+            case tableNum(MarkupTrans):
+                MarkupTrans markupTrans = MarkupTrans::findRecId(_taxTrans.SourceRecId);
+                switch (markupTrans.TransTableId)
+                {
+                    case tableNum(VendInvoiceJour):
+                    case tableNum(VendInvoiceTrans):
+                        return true;
+
+                    case tableNum(CustInvoiceJour):
+                    case tableNum(CustInvoiceTrans):
+                    case tableNum(ProjInvoiceJour):
+                    case tableNum(ProjInvoiceItem):
+                        return false;
+                }
+                break;
+        }
+
+        return _taxTrans.TaxDirection == TaxDirection::IncomingTax
+            || _taxTrans.TaxDirection == TaxDirection::UseTax;
+    }
+
+    private boolean isLedgerJournalPurchase(TaxTrans _taxTrans)
+    {
+        LedgerJournalTrans ledgerJournalTrans = LedgerJournalTrans::findRecId(_taxTrans.SourceRecId, false);
+        LedgerJournalTrans ledgerJournalTransVend;
+
+        if (ledgerJournalTrans.AccountType == LedgerJournalACType::Vend)
+        {
+            return true;
+        }
+
+        if (ledgerJournalTrans.AccountType == LedgerJournalACType::Cust)
+        {
+            return false;
+        }
+
+        select firstonly RecId from ledgerJournalTransVend
+            where ledgerJournalTransVend.JournalNum == ledgerJournalTrans.JournalNum
+               && ledgerJournalTransVend.Voucher == ledgerJournalTrans.Voucher
+               && ledgerJournalTransVend.TransDate == ledgerJournalTrans.TransDate
+               && ledgerJournalTransVend.Invoice
+               && ledgerJournalTransVend.AccountType == LedgerJournalACType::Vend;
+
+        if (ledgerJournalTransVend.RecId)
+        {
+            return true;
+        }
+
+        return ledgerJournalTrans.AccountType == LedgerJournalACType::Ledger
+            && ledgerJournalTrans.ledgerJournalTable().JournalType == LedgerJournalType::Approval;
+    }
+
+    private boolean isCreditNote(TaxTrans _taxTrans, CustVendInvoiceJour _invoiceJour)
+    {
+        if (_invoiceJour.RecId
+            && (_invoiceJour.TableId == tableNum(CustInvoiceJour)
+             || _invoiceJour.TableId == tableNum(VendInvoiceJour)))
+        {
+            return _invoiceJour.creditNote();
+        }
+
+        if (_invoiceJour.RecId)
+        {
+            return _invoiceJour.InvoiceAmount < 0;
+        }
+
+        return _taxTrans.TaxBaseAmountCur < 0;
+    }
+
+    private VendTable getVendTable(VendAccount _vendAccount)
+    {
+        return VendTable::find(_vendAccount);
+    }
+
+    private LogisticsAddressCityName getCityNameForJeco(
+        TaxTrans _taxTrans,
+        GeneralJournalAccountEntry _generalJournalAccountEntry)
+    {
+        LogisticsAddressCityName city;
+        RefTableId sourceTableId = _taxTrans.SourceTableId;
+
+        if (_taxTrans.TaxOrigin == TaxOrigin::TaxReversed)
+        {
+            sourceTableId = TaxTrans::find(_taxTrans.Voucher, _taxTrans.TransDate).SourceTableId;
+        }
+
+        switch (sourceTableId)
+        {
+            case tableNum(ProjInvoiceCost):
+                city = ProjTable::find(
+                    ProjInvoiceCost::findRecId(_taxTrans.SourceRecId)
+                        .projInvoiceJour().ProjInvoiceProjId).City_Mia;
+                break;
+
+            case tableNum(ProjInvoiceEmpl):
+                city = ProjTable::find(
+                    ProjInvoiceEmpl::findRecId(_taxTrans.SourceRecId)
+                        .projInvoiceJour().ProjInvoiceProjId).City_Mia;
+                break;
+
+            case tableNum(ProjInvoiceItem):
+                city = ProjTable::find(
+                    ProjInvoiceItem::findRecId(_taxTrans.SourceRecId)
+                        .projInvoiceJour().ProjInvoiceProjId).City_Mia;
+                break;
+
+            case tableNum(ProjInvoiceOnAcc):
+                city = ProjTable::find(
+                    ProjInvoiceOnAcc::findRecId(_taxTrans.SourceRecId)
+                        .projInvoiceJour().ProjInvoiceProjId).City_Mia;
+                break;
+
+            case tableNum(ProjInvoiceRevenue):
+                city = ProjTable::find(
+                    ProjInvoiceRevenue::findRecId(_taxTrans.SourceRecId)
+                        .projInvoiceJour().ProjInvoiceProjId).City_Mia;
+                break;
+
+            case tableNum(MarkupTrans):
+                MarkupTrans markupTrans = MarkupTrans::findRecId(_taxTrans.SourceRecId);
+                switch (markupTrans.TransTableId)
+                {
+                    case tableNum(ProjInvoiceJour):
+                        city = ProjTable::find(
+                            ProjInvoiceJour::findRecId(markupTrans.TransRecId)
+                                .ProjInvoiceProjId).City_Mia;
+                        break;
+
+                    case tableNum(ProjInvoiceItem):
+                        city = ProjTable::find(
+                            ProjInvoiceItem::findRecId(markupTrans.TransRecId)
+                                .projInvoiceJour().ProjInvoiceProjId).City_Mia;
+                        break;
+
+                    default:
+                        city = this.getCityNameByProject(_generalJournalAccountEntry);
+                        break;
+                }
+                break;
+
+            default:
+                city = this.getCityNameByProject(_generalJournalAccountEntry);
+                break;
+        }
+
+        return city ? city : "NoCity";
+    }
+
+}
