@@ -1,0 +1,62 @@
+class SCVATSummaryReportControllerV3 extends SrsReportRunController
+{
+    public static void main(Args _args)
+    {
+        SCVATSummaryReportControllerV3 controller = new SCVATSummaryReportControllerV3();
+        controller.parmArgs(_args);
+        //controller.parmDialogCaption("@SCMiahona:VATReport");
+        controller.parmReportName(ssrsReportStr(SCVATSummaryReportV3,DetailsV2));
+       
+        controller.startOperation();
+    }
+
+    public ClassDescription caption()
+    {
+
+        return "@SCMiahona:VATReport";
+
+    }
+
+    protected void preRunModifyContract()
+    {
+        
+        SCVATSummaryReportContractV3 contract = this.parmReportContract().parmRdpContract() as SCVATSummaryReportContractV3;
+        this.parmReportContract().parmReportName(this.getReportName(contract));
+        
+
+
+    }
+
+    private str getReportName(SCVATSummaryReportContractV3 _contract)
+    {
+        str reportNameLocal;
+        DetailSummary summary =  _contract.parmSummary();
+        if (summary == DetailSummary::Summary)
+        {
+            reportNameLocal = ssrsReportStr(SCVATSummaryReportV3, SummaryV2);
+        }
+        else
+        {
+            
+            if(_contract.parmTotalByVoucher() == NoYes::Yes)
+            {
+        
+                reportNameLocal = ssrsReportStr(SCVATSummaryReportV3, DetailsGroupByVoucherV2);
+            }
+            else if(_contract.parmTotalByInvoiceId() == NoYes::Yes)
+            {
+
+                reportNameLocal = ssrsReportStr(SCVATSummaryReportV3, DetailsGroupByInvoiceIdV2);
+            }
+            else
+            {
+                reportNameLocal = ssrsReportStr(SCVATSummaryReportV3, DetailsV2);
+            }
+           
+        }
+ 
+
+        return reportNameLocal;
+    }
+
+}
