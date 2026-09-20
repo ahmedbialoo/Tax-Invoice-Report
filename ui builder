@@ -1,0 +1,74 @@
+class SCVATSummaryReportUIBuilderV3 extends SrsReportDataContractUIBuilder
+{
+    DialogField city;
+    DialogField taxDirection;
+    DialogField summary;
+    DialogField dimensionValue;
+    public void postBuild()
+    {
+        super();
+
+        taxDirection = this.bindInfo().getDialogField(
+            this.dataContractObject(),
+            methodStr(SCVATSummaryReportContractV3, parmTaxDirection));
+        city = this.bindInfo().getDialogField(
+            this.dataContractObject(),
+            methodStr(SCVATSummaryReportContractV3, parmCity));
+        dimensionValue = this.bindInfo().getDialogField(
+            this.dataContractObject(),
+            methodStr(SCVATSummaryReportContractV3, parmDimensionValue));
+        summary = this.bindInfo().getDialogField(
+            this.dataContractObject(),
+            methodStr(SCVATSummaryReportContractV3, parmSummary));
+
+        this.setDetailFieldsEnabled(summary.value() != DetailSummary::Summary);
+
+        if (curExt() == "jeco")
+        {
+            city.visible(true);
+            dimensionValue.visible(false);
+        }
+        else
+        {
+            city.visible(false);
+            dimensionValue.visible(true);
+        }
+
+        summary.registerOverrideMethod(
+            methodStr(FormComboBoxControl, modified),
+            methodStr(SCVATSummaryReportUIBuilderV3, allowModifyTaxDirectionAndCity),
+            this);
+        dimensionValue.registerOverrideMethod(
+            methodStr(FormStringControl, lookup),
+            methodStr(SCVATSummaryReportUIBuilderV3, dimensionValueLookup),
+            this);
+    }
+
+    private void setDetailFieldsEnabled(boolean _enabled)
+    {
+        taxDirection.enabled(_enabled);
+        city.enabled(_enabled);
+        dimensionValue.enabled(_enabled);
+    }
+
+    private void dimensionValueLookup(FormStringControl _lookup)
+    {
+        DimensionAttribute dimensionAttribute;
+        Name dimName = "*" + curExt() + "Branch*";
+
+        select firstonly dimensionAttribute
+            where dimensionAttribute.Name like dimName;
+
+        DimensionValueLookupHelper::lookupDimensionValues(
+            DimensionAttribute::findByName(dimensionAttribute.Name),
+            _lookup,
+            curExt());
+    }
+
+    public boolean allowModifyTaxDirectionAndCity(FormComboBoxControl _comboBoxControl)
+    {
+        this.setDetailFieldsEnabled(summary.value() != DetailSummary::Summary);
+        return true;
+    }
+
+}
